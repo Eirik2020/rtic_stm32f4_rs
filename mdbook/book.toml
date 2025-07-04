@@ -1,0 +1,6 @@
+[book]
+authors = ["Eirik Kaldhol Strandman"]
+language = "en"
+multilingual = false
+src = "src"
+title = "RTIC STM32F4 Embedded Rust Template"
