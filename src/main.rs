@@ -1,96 +1,98 @@
-// ####  SET-UP  ####
-// Compiler directives
+// ==== SET-UP ====
+// --- Compiler directives ---
 #![deny(unsafe_code)]
 #![no_main]
 #![no_std]
 
-
-// Imports
+// --- Imports ---
 // Debugger output for RTT
 use rtt_target::{rprintln, rtt_init_print};
-
-// Panic handler for RTT
 use panic_rtt_target as _;
 
 // RTIC
 use rtic::app;
 use rtic_monotonics::systick::prelude::*;
-//
-// STM32F4 HAL
+systick_monotonic!(Mono, 1000); // Set monotonic time to 1000 Hz, 1 ms resolution.
+
+// --- STM32F4 HAL and driver ---
 use stm32f4xx_hal::{
-    pac::{self},
-    prelude::*,
-    gpio::{Output, PushPull, PA5},
+    gpio::{
+        Output, 
+        PushPull, 
+        PA5
+    },
 };
+mod stm32f4_driver;
+
+// --- Import tasks ---
+mod tasks;
+use crate::tasks::blinky;
 
 
-// Set monotonic time to 1000 Hz, 1 ms resolution.
-systick_monotonic!(Mono, 1000);
 
-
-
-
+// ==== APPLICATION SET-UP ====
 #[app(
     device = stm32f4xx_hal::pac,  // This device uses the stm32f4xx_hal Peripheral Access Crate (PAC).
     peripherals = true,           // Auto-initializes the Peripherals struct (dp).
     dispatchers = [SPI1],         // Unused interrupts that RTIC can use internally for software tasks. 
 )]
 mod app {
-    // Import everything (*) from the parent module (rtic_blinky.rs)
     use super::*;
+    // ==== RESOURCES ====
+    #[shared]
+    struct Shared {
 
-    // Resources
-    #[shared] // Shared between different tasks
-    struct Shared {}
-
-    #[local] // Task local data only
+    }
+    #[local]
     struct Local {
         led: PA5<Output<PushPull>>, // LED pin
         state: bool,                // LED state (ON/OFF)
     }
 
 
-    #[init] // Start-up function that initializes the program.
+    // ==== INITIALIZATION ====
+    #[init]
     fn init(cx: init::Context) -> (Shared, Local) {
-        // Assign context device peripherals to dp.
+        // --- Set up peripherals ---
+        // Initialize device peripherals
         let dp = cx.device;
+        let dev = stm32f4_driver::init(dp);
 
-        // Initialize the systick interrupt & obtain the token to prove that we did
-        Mono::start(cx.core.SYST, 8_000_000); // default STM32F401 clock-rate is 8MHz
+        // Define led pin.
+        let led = dev.led;
 
-        // Report that the program successfully started.
+        // Start SysTick with known clock freq
+        Mono::start(cx.core.SYST, dev.clocks.sysclk().to_Hz());
+
+        // Initialize RTT
         rtt_init_print!();
         rprintln!("init");
 
-        // Setup LED
-        let gpioa = dp.GPIOA.split();
-        let mut led = gpioa.pa5.into_push_pull_output();
-        led.set_low();
 
-        // Schedule the blinking task
+        // --- Schedule initial tasks ---
         blink::spawn().ok();
 
-        // Initialize resources
-        (Shared {}, Local { led, state: false })
+
+        // --- Initialize resources ---
+        (
+            Shared {}, 
+            Local { 
+                led, 
+                state: false 
+            })
     }
 
 
 
-    // ####  TASKS  ####
-    #[task(local = [led, state])] // This task uses the local resources "led" and "state".
+    // ==== RTIC Task Definitions ====
+    #[task(local = [led, state])] 
+    // This task blinks the LED periodically. 
     async fn blink(cx: blink::Context) { // Use context cx to access local and shared resources.
         loop {
-            rprintln!("blink");
-            // Access local resources from context (cx.local)
-            if *cx.local.state {         // If LED is on.
-                cx.local.led.set_high();
-                *cx.local.state = false;
-            } else {                     // If LED is off
-                cx.local.led.set_low();
-                *cx.local.state = true;
-            }
-            // At the end of the task, wait 1000 ms (none-blocking).
+            blinky::toggle_pin(cx.local.led, cx.local.state); // Toggle LED on or off 
+            rprintln!("BLINK!"); // Debug, task succeeded.
             Mono::delay(1000.millis()).await;
         }
     }
+    // ...
 }
